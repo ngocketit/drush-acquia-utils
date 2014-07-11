@@ -83,6 +83,28 @@ function acquia_utils_drush_command() {
     'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
   );
 
+  // Wrapper for Acquia Cloud commands.
+  $cmds['au-cloud'] = array(
+    'callback' => 'acquia_utils_exec_command',
+    'callback arguments' => array('cloud_command', TRUE),
+    'description' => 'Run an Acquia Cloud drush command',
+    'options' => $common_options + array(
+      'env' => array(
+        'description' => 'Acquia server environment',
+        'example_value' => 'dev|test|prod',
+      ),
+      'command' => array(
+        'description' => 'Acquia cloud drush command to run',
+        'example_value' => 'apache-error,php-error,drupal-request,drupal-watchdog,varnish-request',
+      ),
+    ),
+    'aliases' => array('cloud'),
+    'examples' => array(
+      'au-cloud --email=email --key=apiKey --sitename=site --env=prod --command=ac-domain-list' => 'Run Acquia Cloud ac-domain-list drush command',
+    ),
+    'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
+  );
+
   return $cmds;
 }
 
@@ -613,4 +635,159 @@ function _acquia_utils_check_logstream_install() {
   }
 
   return TRUE;
+}
+
+
+/**
+ * Get all available Acquia Cloud drush commands.
+ */
+function _acquia_utils_get_available_cloud_commands() {
+  return array(
+    'ac-api-login',
+    'ac-code-deploy',
+    'ac-code-path-deploy',
+    'ac-database-add',
+    'ac-database-copy',
+    'ac-database-delete',
+    'ac-database-info',
+    'ac-database-instance-backup',
+    'ac-database-instance-backup-delete',
+    'ac-database-instance-backup-download',
+    'ac-database-instance-backup-info',
+    'ac-database-instance-backup-list',
+    'ac-database-instance-backup-restore',
+    'ac-database-instance-info',
+    'ac-database-instance-list',
+    'ac-database-list',
+    'ac-domain-add',
+    'ac-domain-delete',
+    'ac-domain-info',
+    'ac-domain-list',
+    'ac-domain-move',
+    'ac-domain-purge',
+    'ac-environment-info',
+    'ac-environment-install',
+    'ac-environment-list',
+    'ac-environment-livedev',
+    'ac-files-copy',
+    'ac-server-info',
+    'ac-server-list',
+    'ac-site-info',
+    'ac-sshkey-delete',
+    'ac-sshkey-info',
+    'ac-sshkey-list',
+    'ac-svnuser-add',
+    'ac-svnuser-delete',
+    'ac-svnuser-info',
+    'ac-svnuser-list',
+    'ac-task-info',
+    'ac-task-list',
+  );
+}
+
+
+/**
+ * Get the options for a given Acquia Cloud command.
+ */
+function _acquia_utils_get_cloud_command_options($command) {
+  $command_options = array(
+    'cainfo',
+    'caller',
+    'endpoint',
+    'format',
+    'email',
+    'key',
+    'acapi-conf-path',
+  );
+
+  switch ($command) {
+    case 'ac-api-login':
+      $command_options += array(
+        'reset',
+      );
+      break;
+
+    case 'ac-database-instance-backup-download':
+      $command_options += array(
+        'result-file',
+      );
+      break;
+  }
+
+  return $command_options;
+}
+
+
+/**
+ * Run the Acquia Cloud drush command.
+ */
+function drush_acquia_utils_cloud_command($options) {
+  $cmd = drush_get_option('command', FALSE);
+
+  if (!$cmd) {
+    return drush_set_error(dt('Command missing. Use --command to specify the command you want to execute'));
+  }
+
+  $supported_cmds = _acquia_utils_get_available_cloud_commands();
+  if (!in_array($cmd, $supported_cmds)) {
+    return drush_set_error(dt('Command "@cmd" is not supported.', array('@cmd' => $cmd)));
+  }
+
+  // The environment is required.
+  $env = drush_get_option('env', FALSE);
+  if (!$env) {
+    return drush_set_error(dt('Environment is required. Use --env to specify dev,test,prod environment'));
+  }
+
+  $sitename = $options['sitename'];
+
+  // Get all the options and arguments and then pass them along to the command.
+  $cmd_opt_names = _acquia_utils_get_cloud_command_options($cmd);
+  $cmd_options   = array();
+
+  // No need to include these options.
+  $excluded_options = array(
+    'email',
+    'key',
+  );
+
+  $cmd_opt_names = array_diff($cmd_opt_names, $excluded_options);
+
+  foreach ($cmd_opt_names as $opt) {
+    if (isset($options[$opt])) {
+      $cmd_options[$opt] = $options[$opt];
+    }
+    else {
+      // @todo: We may need to support options as a list here.
+      $value = drush_get_option($opt, FALSE);
+      if ($value) {
+        $cmd_options[$opt] = $value;
+      }
+    }
+  }
+
+  $arguments = drush_get_arguments();
+
+  // Remove the drush command itself from the arguments.
+  if (!empty($arguments)) {
+    unset($arguments[0]);
+  }
+
+  $ac_cmd = "drush @{$sitename}.{$env} {$cmd} ";
+
+  foreach ($cmd_options as $key => $val) {
+    $ac_cmd .= "--{$key}={$val} ";
+  }
+
+  if (!empty($arguments)) {
+    foreach ($arguments as $arg) {
+      $ac_cmd .= "{$arg} ";
+    }
+  }
+
+  $ac_cmd = rtrim($ac_cmd);
+
+  drush_print(dt('Executing Acquia Cloud drush command: @cmd', array('@cmd' => $ac_cmd)));
+
+  @system($ac_cmd);
 }
