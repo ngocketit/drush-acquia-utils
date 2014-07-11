@@ -27,6 +27,7 @@ function acquia_utils_drush_command() {
   $cmds = array();
   $common_options = _acquia_utils_common_options();
 
+  // Add Acquia cloud API credentials.
   $cmds['au-add-credentials'] = array(
     'callback' => 'acquia_utils_exec_command',
     'callback arguments' => array('add_credentials'),
@@ -41,6 +42,7 @@ function acquia_utils_drush_command() {
     'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
   );
 
+  // Clear Acquia Varnish cache.
   $cmds['au-purge-varnish'] = array(
     'callback' => 'acquia_utils_exec_command',
     'callback arguments' => array('purge_varnish', TRUE),
@@ -55,6 +57,28 @@ function acquia_utils_drush_command() {
     'aliases' => array('aupv'),
     'examples' => array(
       'au-purge-varnish --email=email --key=apiKey --sitename=site --paths=paths' => 'Purge Varnish cache for @paths on @site',
+    ),
+    'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
+  );
+
+  // Show live log stream.
+  $cmds['au-logstream'] = array(
+    'callback' => 'acquia_utils_exec_command',
+    'callback arguments' => array('show_logstream', TRUE),
+    'description' => 'Display live logging information of Acquia server',
+    'options' => $common_options + array(
+      'env' => array(
+        'description' => 'Acquia server environment',
+        'example_value' => 'dev|test|prod',
+      ),
+      'types' => array(
+        'description' => 'Types of log to be displayed',
+        'example_value' => 'apache-error,php-error,drupal-request,drupal-watchdog,varnish-request',
+      ),
+    ),
+    'aliases' => array('logstream'),
+    'examples' => array(
+      'au-logstream --email=email --key=apiKey --sitename=site --env=prod --types=varnish-request' => 'Show live Varnish request log for @site on environment @prod',
     ),
     'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
   );
@@ -151,6 +175,7 @@ function acquia_utils_exec_command($command, $login_required = FALSE) {
     if (!acquia_utils_ac_api_login($sitename, $credentials)) {
       return drush_set_error(dt('Acquia Cloud API login fails. Please check your credentials and/or site name'));
     }
+    drush_print('Acquia cloud API authenticated');
   }
 
   $drush_cmd = "drush_acquia_utils_{$command}";
@@ -511,4 +536,81 @@ function acquia_utils_ac_api_login($sitename, $credentials) {
   $logged_in = empty($retval['output']) && ($retval['code'] == 0);
 
   return $logged_in;
+}
+
+
+/**
+ * Get all avaiable log stream types.
+ */
+function _acquia_utils_get_logstream_types() {
+  return array(
+    'apache-request',
+    'apache-error',
+    'php-error',
+    'drupal-request',
+    'drupal-watchdog',
+    'varnish-request',
+  );
+}
+
+
+/**
+ * Show live log stream on Acquia server.
+ */
+function drush_acquia_utils_show_logstream($options) {
+  // Pre-conditions check.
+  if (!_acquia_utils_check_logstream_install()) {
+    return;
+  }
+
+  $all_types = _acquia_utils_get_logstream_types();
+  $types = drush_get_option_list('types', $all_types);
+  $types = implode(' ', $types);
+
+  $sitename = $options['sitename'];
+  $environment = drush_get_option('env', 'prod');
+
+  drush_print(dt('Logstream for site "@site" on environment "@env"', array('@site' => $sitename, '@env' => $environment)));
+
+  // First, try with devcloud sbuscription type.
+  $command = "logstream tail devcloud:{$sitename} {$environment} --types={$types}";
+  @system($command, $exit_code);
+
+  // If we fail, there is possibility that we used a wrong site name (e.g,
+  // devcloud vs prod) so we just retry with the other one.
+  if ($exit_code) {
+    $command = "logstream tail prod:{$sitename} {$environment} --types={$types}";
+    @system($command, $exit_code);
+  }
+}
+
+
+/**
+ * Check if logstream is installed and install it if not.
+ */
+function _acquia_utils_check_logstream_install() {
+  $exit_code = 0;
+  $output = array();
+
+  @exec('which gem', $output, $exit_code);
+
+  // Ruby gem is not installed. Prompt user to install it.
+  if ($exit_code && empty($output)) {
+    drush_set_error(dt('Ruby Gem is required to run this command. Please install Ruby first'));
+    return FALSE;
+  }
+
+  // Check if logstream is installed.
+  @exec('which logstream', $output, $exit_code);
+
+  if ($exit_code) {
+    if (drush_confirm(dt('logstream gem is required to run this command. Do you want to install it?'))) {
+      @exec('gem install logstream');
+    }
+    else {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
 }
